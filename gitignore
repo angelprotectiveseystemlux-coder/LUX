@@ -1,0 +1,13 @@
+/android/
+/build/
+/.dart_tool/
+/.flutter-plugins
+/.flutter-plugins-dependencies
+/.packages
+/.pub-cache/
+/.pub/
+/assets/fonts/
+*.jks
+*.keystore
+.idea/
+.vscode/

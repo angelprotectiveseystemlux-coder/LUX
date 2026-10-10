@@ -1,0 +1,31 @@
+name: lux_app
+description: LUX - واحد مدیریت درس‌ها و تحصیل شخصی
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  intl: any
+  sqflite: ^2.3.3+1
+  path_provider: ^2.1.4
+  path: ^1.9.0
+  shamsi_date: ^1.0.1
+  flutter_local_notifications: ^17.2.2
+  timezone: ^0.9.4
+  permission_handler: ^11.3.1
+  image_picker: ^1.1.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/logo/
