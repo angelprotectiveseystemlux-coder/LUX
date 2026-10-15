@@ -11,16 +11,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # پوشه‌ی پروژه را خودکار پیدا می‌کند (چه در ریشه‌ی مخزن باشد چه داخل یک زیرپوشه مثل lux_app)
+      # پوشه‌ی پروژه را پیدا می‌کند: اول فایل‌های باز‌شده در مخزن، اگر نبود از داخل lux_app.zip
       - name: Find project folder
         run: |
-          P=$(find . -name pubspec.yaml -not -path "./.git/*" -not -path "*/android/*" | head -1)
-          if [ -z "$P" ]; then echo "::error::pubspec.yaml not found in repo"; exit 1; fi
-          D=$(dirname "$P")
-          echo "Project folder: $D"
-          if [ ! -f "$D/tool/ci_prepare.py" ]; then
-            echo "::error::tool/ci_prepare.py not found in $D — پوشه‌ی tool آپلود نشده"
-            ls -la "$D"
+          T=$(find . -path "*/tool/ci_prepare.py" -not -path "./.git/*" | head -1)
+          if [ -n "$T" ]; then
+            D=$(dirname "$(dirname "$T")")
+            echo "Using loose files in: $D"
+          elif [ -f lux_app.zip ]; then
+            mkdir -p "$RUNNER_TEMP/src"
+            unzip -q lux_app.zip -d "$RUNNER_TEMP/src"
+            T=$(find "$RUNNER_TEMP/src" -path "*/tool/ci_prepare.py" | head -1)
+            if [ -z "$T" ]; then echo "::error::zip does not contain tool/ci_prepare.py"; exit 1; fi
+            D=$(dirname "$(dirname "$T")")
+            echo "Using lux_app.zip, folder: $D"
+          else
+            echo "::error::Neither project files nor lux_app.zip found in repo"
+            ls -la
             exit 1
           fi
           echo "APP_DIR=$D" >> "$GITHUB_ENV"
