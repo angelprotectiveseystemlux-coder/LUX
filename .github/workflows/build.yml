@@ -11,6 +11,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # پوشه‌ی پروژه را خودکار پیدا می‌کند (چه در ریشه‌ی مخزن باشد چه داخل یک زیرپوشه مثل lux_app)
+      - name: Find project folder
+        run: |
+          P=$(find . -name pubspec.yaml -not -path "./.git/*" -not -path "*/android/*" | head -1)
+          if [ -z "$P" ]; then echo "::error::pubspec.yaml not found in repo"; exit 1; fi
+          D=$(dirname "$P")
+          echo "Project folder: $D"
+          if [ ! -f "$D/tool/ci_prepare.py" ]; then
+            echo "::error::tool/ci_prepare.py not found in $D — پوشه‌ی tool آپلود نشده"
+            ls -la "$D"
+            exit 1
+          fi
+          echo "APP_DIR=$D" >> "$GITHUB_ENV"
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -22,19 +36,24 @@ jobs:
           cache: true
 
       - name: Create Android project
+        working-directory: ${{ env.APP_DIR }}
         run: flutter create --org com.lux --project-name lux_app --platforms android .
 
       - name: Prepare (manifest, icons, gradle, fonts)
+        working-directory: ${{ env.APP_DIR }}
         run: python3 tool/ci_prepare.py
 
       - name: Get packages
+        working-directory: ${{ env.APP_DIR }}
         run: flutter pub get
 
       # فیکس کرش: هر دو معماری ۳۲ بیتی (arm) و ۶۴ بیتی (arm64) داخل APK می‌آیند.
       - name: Build APK
+        working-directory: ${{ env.APP_DIR }}
         run: flutter build apk --release --target-platform android-arm,android-arm64
 
       - name: Sign APK
+        working-directory: ${{ env.APP_DIR }}
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
@@ -43,9 +62,10 @@ jobs:
         run: bash tool/sign_apk.sh
 
       - name: Check ABIs inside APK
+        working-directory: ${{ env.APP_DIR }}
         run: unzip -l build/app/outputs/flutter-apk/lux.apk | grep -E "lib/.*(libflutter|libapp)\.so"
 
       - uses: actions/upload-artifact@v4
         with:
           name: lux-apk
-          path: build/app/outputs/flutter-apk/lux.apk
+          path: ${{ env.APP_DIR }}/build/app/outputs/flutter-apk/lux.apk
