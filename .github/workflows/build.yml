@@ -5,6 +5,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -76,3 +79,14 @@ jobs:
         with:
           name: lux-apk
           path: ${{ env.APP_DIR }}/build/app/outputs/flutter-apk/lux.apk
+
+      # مثل قبل، APK در بخش Releases هم گذاشته می‌شود (دانلودش از موبایل ساده‌تر است)
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "build-${{ github.run_number }}" \
+            "${{ env.APP_DIR }}/build/app/outputs/flutter-apk/lux.apk" \
+            --title "LUX build ${{ github.run_number }}" \
+            --notes "Automated build of commit ${{ github.sha }}." \
+            --latest
