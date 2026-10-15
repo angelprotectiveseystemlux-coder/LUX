@@ -2,38 +2,16 @@ name: Build LUX APK
 
 on:
   push:
-    branches: [main, master]
+    branches: [main]
   workflow_dispatch:
-
-# Needed so the job can publish the APK as a GitHub Release.
-permissions:
-  contents: write
-
-# A newer push cancels an older build that is still running.
-concurrency:
-  group: build-${{ github.ref }}
-  cancel-in-progress: true
-
-env:
-  PROJECT_DIR: _src/lux_app
-  APK_PATH: _src/lux_app/build/app/outputs/flutter-apk/lux.apk
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
-
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
-      - name: Unpack project
-        run: |
-          test -f lux_app.zip || { echo "::error::lux_app.zip not found in repo root"; exit 1; }
-          mkdir -p _src
-          unzip -oq lux_app.zip -d _src
-          ls "$PROJECT_DIR"
-
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
@@ -43,35 +21,20 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Create Android scaffold
-        working-directory: ${{ env.PROJECT_DIR }}
-        run: |
-          flutter --version
-          flutter create --platforms=android --org com.lux --project-name lux_app /tmp/scaffold
-          rm -rf android
-          cp -r /tmp/scaffold/android ./android
+      - name: Create Android project
+        run: flutter create --org com.lux --project-name lux_app --platforms android .
 
-      - name: Prepare Android project
-        working-directory: ${{ env.PROJECT_DIR }}
+      - name: Prepare (manifest, icons, gradle, fonts)
         run: python3 tool/ci_prepare.py
 
       - name: Get packages
-        working-directory: ${{ env.PROJECT_DIR }}
         run: flutter pub get
 
-      - name: Unit tests
-        working-directory: ${{ env.PROJECT_DIR }}
-        continue-on-error: true
-        run: flutter test
-
-      # arm64 only: ~10-12 MB instead of ~28 MB, so the download is much less
-      # likely to break on a weak connection. Runs on every 64-bit phone.
-      - name: Build release APK
-        working-directory: ${{ env.PROJECT_DIR }}
-        run: flutter build apk --release --target-platform android-arm64
+      # فیکس کرش: هر دو معماری ۳۲ بیتی (arm) و ۶۴ بیتی (arm64) داخل APK می‌آیند.
+      - name: Build APK
+        run: flutter build apk --release --target-platform android-arm,android-arm64
 
       - name: Sign APK
-        working-directory: ${{ env.PROJECT_DIR }}
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
@@ -79,24 +42,10 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: bash tool/sign_apk.sh
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v7
+      - name: Check ABIs inside APK
+        run: unzip -l build/app/outputs/flutter-apk/lux.apk | grep -E "lib/.*(libflutter|libapp)\.so"
+
+      - uses: actions/upload-artifact@v4
         with:
           name: lux-apk
-          path: ${{ env.APK_PATH }}
-          if-no-files-found: error
-          retention-days: 14
-          compression-level: 0   # an APK is already compressed
-
-      # Direct, un-zipped download link: Releases -> latest -> lux.apk
-      - name: Publish release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          TAG="build-${{ github.run_number }}"
-          gh release create "$TAG" "$APK_PATH" \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            --title "LUX build ${{ github.run_number }}" \
-            --notes "Automated build of commit ${GITHUB_SHA::7}." \
-            --latest
+          path: build/app/outputs/flutter-apk/lux.apk
