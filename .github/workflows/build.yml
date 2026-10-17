@@ -60,7 +60,15 @@ jobs:
       # فیکس کرش: هر دو معماری ۳۲ بیتی (arm) و ۶۴ بیتی (arm64) داخل APK می‌آیند.
       - name: Build APK
         working-directory: ${{ env.APP_DIR }}
-        run: flutter build apk --release --target-platform android-arm,android-arm64
+        run: |
+          set -o pipefail
+          if ! flutter build apk --release --target-platform android-arm,android-arm64 2>&1 | tee build.log; then
+            echo "=== خطاهای اصلی ==="
+            grep -nE "\.dart:[0-9]+:[0-9]+|Error:|error:|What went wrong|Execution failed|Could not|FAILURE|incompatible|requires" build.log | grep -v "deprecat" | head -25 | while IFS= read -r line; do
+              echo "::error::${line:0:380}"
+            done
+            exit 1
+          fi
 
       - name: Sign APK
         working-directory: ${{ env.APP_DIR }}
