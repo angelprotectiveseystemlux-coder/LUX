@@ -4,12 +4,6 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
-name: Build LUX APK
-
-on:
-  push:
-    branches: [main]
-  workflow_dispatch:
 
 permissions:
   contents: write
@@ -55,13 +49,7 @@ jobs:
       - name: Disable Android lint for release
         run: |
           mkdir -p ~/.gradle/init.d
-          cat > ~/.gradle/init.d/nolint.gradle <<'EOT'
-          allprojects {
-            tasks.configureEach { t ->
-              if (t.name.startsWith('lint')) { t.enabled = false }
-            }
-          }
-          EOT
+          echo "allprojects { tasks.configureEach { t -> if (t.name.startsWith('lint')) { t.enabled = false } } }" > ~/.gradle/init.d/nolint.gradle
 
       - name: Create Android project
         working-directory: ${{ env.APP_DIR }}
@@ -115,70 +103,5 @@ jobs:
             "${{ env.APP_DIR }}/build/app/outputs/flutter-apk/lux.apk" \
             --title "LUX build ${{ github.run_number }}" \
             --notes "Automated build of commit ${{ github.sha }}." \
-            --latest
-
-permissions:
-  contents: write
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      # پوشه‌ی پروژه را پیدا می‌کند: اول فایل‌های باز‌شده در مخزن، اگر نبود از داخل lux_app.zip
-      - name: Find project folder
-        run: |
-          T=$(find . -path "*/tool/ci_prepare.py" -not -path "./.git/*" | head -1)
-          if [ -n "$T" ]; then
-            D=$(dirname "$(dirname "$T")")
-            echo "Using loose files in: $D"
-          elif [ -f lux_app.zip ]; then
-            mkdir -p "$RUNNER_TEMP/src"
-            unzip -q lux_app.zip -d "$RUNNER_TEMP/src"
-            T=$(find "$RUNNER_TEMP/src" -path "*/tool/ci_prepare.py" | head -1)
-            if [ -z "$T" ]; then echo "::error::zip does not contain tool/ci_prepare.py"; exit 1; fi
-            D=$(dirname "$(dirname "$T")")
-            echo "Using lux_app.zip, folder: $D"
-          else
-            echo "::error::Neither project files nor lux_app.zip found in repo"
-            ls -la
-            exit 1
-          fi
-          echo "APP_DIR=$D" >> "$GITHUB_ENV"
-
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
-
-         KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: bash tool/sign_apk.sh
-
-      - name: Check ABIs inside APK
-        working-directory: ${{ env.APP_DIR }}
-        run: unzip -l build/app/outputs/flutter-apk/lux.apk | grep -E "lib/.*(libflutter|libapp)\.so"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: lux-apk
-          path: ${{ env.APP_DIR }}/build/app/outputs/flutter-apk/lux.apk
-
-      # مثل قبل، APK در بخش Releases هم گذاشته می‌شود (دانلودش از موبایل ساده‌تر است)
-      - name: Publish release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "build-${{ github.run_number }}" \
-            "${{ env.APP_DIR }}/build/app/outputs/flutter-apk/lux.apk" \
-            --title "LUX build ${{ github.run_number }}" \
-            --notes "Automated build of commit ${{ github.sha }}." \
+     
             --latest
