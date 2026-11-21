@@ -162,10 +162,7 @@ async def _cmd_chats(arg: str):
 
 async def _cmd_ai():
     try:
-        t = await gemini.chat("فقط یک کلمه جواب بده.", [{"role": "user", "text": "سلام"}], 50)
-        await send("✅ Gemini جواب داد: " + esc(t[:200]))
-    except gemini.GeminiError as e:
-        await send(f"❌ {esc(e.code)}: {esc(e.message)}\n{esc(e.detail)}")
+        await send(esc(await gemini.diagnose()))
     except Exception as e:
         await send("❌ " + esc(type(e).__name__) + ": " + esc(str(e)[:300]))
 

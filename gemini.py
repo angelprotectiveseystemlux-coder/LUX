@@ -1,4 +1,6 @@
 """اتصال به Gemini. کلید فقط روی سرور است."""
+import re
+
 import httpx
 
 import config
@@ -23,20 +25,40 @@ def _http() -> httpx.AsyncClient:
     return _client
 
 
-async def _pick_model() -> str:
-    """اگر اسم مدل در تنظیمات دیگر وجود نداشت، یک مدل flash مناسب پیدا می‌کند."""
-    r = await _http().get(f"{_BASE}/models", params={"pageSize": 200}, headers={"x-goog-api-key": config.GEMINI_API_KEY})
-    r.raise_for_status()
+def _ver(name: str) -> float:
+    m = re.search(r"(\d+(?:\.\d+)?)", name)
+    return float(m.group(1)) if m else 0.0
+
+
+async def _list_models() -> httpx.Response:
+    return await _http().get(
+        f"{_BASE}/models", params={"pageSize": 200}, headers={"x-goog-api-key": config.GEMINI_API_KEY}
+    )
+
+
+def _flash_names(data: dict) -> list[str]:
     names = []
-    for m in r.json().get("models", []):
+    for m in data.get("models", []):
         n = m.get("name", "").removeprefix("models/")
-        if "flash" not in n or any(x in n for x in ("lite", "image", "tts", "live", "audio", "thinking", "exp")):
+        if "flash" not in n or n.endswith("-latest"):
+            continue
+        if any(x in n for x in ("lite", "image", "tts", "live", "audio", "thinking", "exp", "preview")):
             continue
         if "generateContent" in m.get("supportedGenerationMethods", []):
             names.append(n)
+    names.sort(key=_ver, reverse=True)
+    return names
+
+
+async def _pick_model() -> str:
+    """مدلِ flashِ مناسب را از فهرستِ خودِ گوگل پیدا می‌کند."""
+    r = await _list_models()
+    if r.status_code in (400, 401, 403):
+        raise GeminiError("ai_key", "کلید رهگشا مشکل دارد.", "فهرست مدل‌ها HTTP %s: %s" % (r.status_code, r.text[:300]))
+    r.raise_for_status()
+    names = _flash_names(r.json())
     if not names:
         raise GeminiError("no_model", "مدلی برای رهگشا پیدا نشد.")
-    names.sort(reverse=True)
     return names[0]
 
 
@@ -62,7 +84,8 @@ async def chat(system: str, messages: list[dict], max_tokens: int = 1200) -> str
         raise GeminiError("not_configured", "رهگشا هنوز راه‌اندازی نشده.")
     model = _model or config.GEMINI_MODEL
     r = await _generate(model, system, messages, max_tokens)
-    if r.status_code == 404:
+    if r.status_code in (401, 404) or (r.status_code == 400 and "model" in r.text.lower()):
+        # اسم مدل یا روشِ احراز را از فهرستِ گوگل دوباره پیدا کن و یک‌بار تلاش کن
         _model = await _pick_model()
         r = await _generate(_model, system, messages, max_tokens)
     if r.status_code == 429:
@@ -77,3 +100,21 @@ async def chat(system: str, messages: list[dict], max_tokens: int = 1200) -> str
     parts = cands[0].get("content", {}).get("parts", [])
     text = "".join(p.get("text", "") for p in parts).strip()
     return text or "…"
+
+
+async def diagnose() -> str:
+    """گزارشِ کوتاه برای مدیر: کلید، فهرست مدل‌ها، و یک تماسِ آزمایشی."""
+    lines = ["کلید: %s…" % config.GEMINI_API_KEY[:3]]
+    r = await _list_models()
+    lines.append("فهرست مدل‌ها: HTTP %s" % r.status_code)
+    if r.status_code != 200:
+        lines.append(r.text[:300])
+        return "\n".join(lines)
+    names = _flash_names(r.json())
+    lines.append("مدل‌های flash: " + (", ".join(names[:6]) or "هیچ"))
+    try:
+        t = await chat("فقط یک کلمه جواب بده.", [{"role": "user", "text": "سلام"}], 50)
+        lines.append("✅ جواب: " + t[:100])
+    except GeminiError as e:
+        lines.append("❌ %s %s" % (e.code, e.detail[:300]))
+    return "\n".join(lines)
