@@ -87,11 +87,26 @@ async def _generate(model: str, system: str, messages: list[dict], max_tokens: i
 
 _BUSY = (500, 502, 503, 504)
 
+# بعضی کلیدها (مثل AQ.) اجازه‌ی «فهرست مدل‌ها» ندارند؛ در آن حالت از این اسم‌ها امتحان می‌کنیم.
+_CANDIDATES = ["gemini-flash-latest", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3-flash", "gemini-2.5-flash"]
 
-async def _try(model: str, system: str, messages: list[dict], max_tokens: int) -> httpx.Response:
-    """اگر گوگل شلوغ بود (۵xx) تا سه بار با وقفه دوباره می‌فرستد."""
+
+async def _names() -> list[str]:
+    try:
+        r = await _list_models()
+        if r.status_code == 200:
+            n = _flash_names(r.json())
+            if n:
+                return n
+    except Exception:
+        pass
+    return list(_CANDIDATES)
+
+
+async def _try(model: str, system: str, messages: list[dict], max_tokens: int, retries: int = 2) -> httpx.Response:
+    """اگر گوگل شلوغ بود (۵xx) با وقفه دوباره می‌فرستد."""
     r = await _generate(model, system, messages, max_tokens)
-    for i in range(2):
+    for i in range(retries):
         if r.status_code not in _BUSY:
             break
         await asyncio.sleep(1.5 * (i + 1))
@@ -105,29 +120,27 @@ async def chat(system: str, messages: list[dict], max_tokens: int = 1200) -> str
         raise GeminiError("not_configured", "رهگشا هنوز راه‌اندازی نشده.")
     model = _model or config.GEMINI_MODEL
     r = await _try(model, system, messages, max_tokens)
-    if r.status_code in (401, 404) or (r.status_code == 400 and "model" in r.text.lower()):
-        # اسم مدل یا روشِ احراز را از فهرستِ گوگل دوباره پیدا کن و یک‌بار تلاش کن
-        _model = await _pick_model()
-        r = await _try(_model, system, messages, max_tokens)
-    if r.status_code in _BUSY:
-        # مدلِ فعلی شلوغ است؛ مدل‌های دیگرِ همان کلید را امتحان کن
-        lr = await _list_models()
-        if lr.status_code == 200:
-            for n in _flash_names(lr.json())[:3]:
-                if n == model or n == _model:
-                    continue
-                r2 = await _try(n, system, messages, max_tokens)
-                if r2.status_code == 200:
-                    _model = n
-                    r = r2
-                    break
+    bad = r.status_code in (401, 404) or r.status_code in _BUSY or (r.status_code == 400 and "model" in r.text.lower())
+    if bad:
+        # مدلِ فعلی جواب نداد (نبود یا شلوغ است)؛ چند مدلِ دیگر را امتحان کن
+        tried = 0
+        for n in await _names():
+            if n == model or tried >= 3:
+                continue
+            tried += 1
+            r2 = await _try(n, system, messages, max_tokens, retries=0)
+            if r2.status_code == 200:
+                _model = n
+                r = r2
+                break
+            if r2.status_code != 404:
                 r = r2
     if r.status_code in _BUSY:
         raise GeminiError("busy", "رهگشا الان شلوغ است؛ چند لحظه بعد دوباره بفرست.", r.text[:200])
     if r.status_code == 429:
         raise GeminiError("quota", "سهمیه‌ی رهگشا فعلاً تمام شده.", r.text[:300])
-    if r.status_code in (400, 401, 403):
-        raise GeminiError("ai_key", "کلید رهگشا مشکل دارد.", r.text[:300])
+    if r.status_code in (400, 401, 403, 404):
+        raise GeminiError("ai_key", "کلید یا مدلِ رهگشا مشکل دارد.", "HTTP %s: %s" % (r.status_code, r.text[:300]))
     r.raise_for_status()
     data = r.json()
     cands = data.get("candidates") or []
@@ -139,22 +152,22 @@ async def chat(system: str, messages: list[dict], max_tokens: int = 1200) -> str
 
 
 async def diagnose() -> str:
-    """گزارشِ کوتاه برای مدیر: کلید، فهرست مدل‌ها، و یک تماسِ آزمایشی."""
+    """گزارشِ کوتاه برای مدیر: کلید، فهرست مدل‌ها (اختیاری)، و تماسِ آزمایشیِ اصلی."""
     k = config.GEMINI_API_KEY
     lines = ["کلید: %s… طول %d، آخرش …%s" % (k[:3], len(k), k[-4:])]
-    h = await _http().get(f"{_BASE}/models", params={"pageSize": 1}, headers={"x-goog-api-key": k})
-    q = await _http().get(f"{_BASE}/models", params={"pageSize": 1, "key": k})
-    lines.append("با هدر: HTTP %s | با ?key=: HTTP %s" % (h.status_code, q.status_code))
-    r = await _list_models()
-    lines.append("فهرست مدل‌ها: HTTP %s" % r.status_code)
-    if r.status_code != 200:
-        lines.append(r.text[:300])
-        return "\n".join(lines)
-    names = _flash_names(r.json())
-    lines.append("مدل‌های flash: " + (", ".join(names[:6]) or "هیچ"))
+    try:
+        r = await _list_models()
+        if r.status_code == 200:
+            lines.append("فهرست مدل‌ها: " + ", ".join(_flash_names(r.json())[:5]))
+        else:
+            lines.append("فهرست مدل‌ها: HTTP %s (بعضی کلیدها اجازه‌ی فهرست‌گیری ندارند؛ مهم نتیجه‌ی تماسِ آزمایشی است)" % r.status_code)
+    except Exception as e:
+        lines.append("فهرست مدل‌ها: %s" % type(e).__name__)
     try:
         t = await chat("فقط یک کلمه جواب بده.", [{"role": "user", "text": "سلام"}], 50)
-        lines.append("✅ جواب: " + t[:100])
+        lines.append("✅ جواب (مدل %s): %s" % (_model or config.GEMINI_MODEL, t[:100]))
     except GeminiError as e:
-        lines.append("❌ %s %s" % (e.code, e.detail[:300]))
+        lines.append("❌ %s: %s" % (e.code, e.detail[:300] or e.message))
+    except Exception as e:
+        lines.append("❌ %s: %s" % (type(e).__name__, str(e)[:200]))
     return "\n".join(lines)
