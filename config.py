@@ -26,6 +26,12 @@ GEMINI_API_KEY = _g("GEMINI_API_KEY", "AQ.Ab8RN6KrVsxbQhRLJnsqR6iUaWRSlRi8b7Lj8C
 GEMINI_MODEL = _g("GEMINI_MODEL", "gemini-flash-latest")
 AI_DAILY_LIMIT = int(_g("AI_DAILY_LIMIT", "60"))
 
+# سرویس هوش مصنوعیِ جایگزین (هر سرویسی که با فرمتِ OpenAI کار کند، مثل Groq یا OpenRouter).
+# اگر کلیدِ Gemini کار نکند یا شلوغ باشد، رهگشا خودکار از این استفاده می‌کند.
+ALT_AI_KEY = _g("ALT_AI_KEY", "PASTE_ALT_AI_KEY")
+ALT_AI_URL = _g("ALT_AI_URL", "https://api.groq.com/openai/v1/chat/completions")
+ALT_AI_MODEL = _g("ALT_AI_MODEL", "llama-3.3-70b-versatile")
+
 SESSION_DAYS = 180
 MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024
 
