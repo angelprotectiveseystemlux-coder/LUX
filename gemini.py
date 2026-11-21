@@ -1,4 +1,5 @@
 """اتصال به Gemini. کلید فقط روی سرور است."""
+import asyncio
 import re
 
 import httpx
@@ -84,16 +85,45 @@ async def _generate(model: str, system: str, messages: list[dict], max_tokens: i
     return await _req("POST", f"{_BASE}/models/{model}:generateContent", json=body)
 
 
+_BUSY = (500, 502, 503, 504)
+
+
+async def _try(model: str, system: str, messages: list[dict], max_tokens: int) -> httpx.Response:
+    """اگر گوگل شلوغ بود (۵xx) تا سه بار با وقفه دوباره می‌فرستد."""
+    r = await _generate(model, system, messages, max_tokens)
+    for i in range(2):
+        if r.status_code not in _BUSY:
+            break
+        await asyncio.sleep(1.5 * (i + 1))
+        r = await _generate(model, system, messages, max_tokens)
+    return r
+
+
 async def chat(system: str, messages: list[dict], max_tokens: int = 1200) -> str:
     global _model
     if not config.is_set(config.GEMINI_API_KEY):
         raise GeminiError("not_configured", "رهگشا هنوز راه‌اندازی نشده.")
     model = _model or config.GEMINI_MODEL
-    r = await _generate(model, system, messages, max_tokens)
+    r = await _try(model, system, messages, max_tokens)
     if r.status_code in (401, 404) or (r.status_code == 400 and "model" in r.text.lower()):
         # اسم مدل یا روشِ احراز را از فهرستِ گوگل دوباره پیدا کن و یک‌بار تلاش کن
         _model = await _pick_model()
-        r = await _generate(_model, system, messages, max_tokens)
+        r = await _try(_model, system, messages, max_tokens)
+    if r.status_code in _BUSY:
+        # مدلِ فعلی شلوغ است؛ مدل‌های دیگرِ همان کلید را امتحان کن
+        lr = await _list_models()
+        if lr.status_code == 200:
+            for n in _flash_names(lr.json())[:3]:
+                if n == model or n == _model:
+                    continue
+                r2 = await _try(n, system, messages, max_tokens)
+                if r2.status_code == 200:
+                    _model = n
+                    r = r2
+                    break
+                r = r2
+    if r.status_code in _BUSY:
+        raise GeminiError("busy", "رهگشا الان شلوغ است؛ چند لحظه بعد دوباره بفرست.", r.text[:200])
     if r.status_code == 429:
         raise GeminiError("quota", "سهمیه‌ی رهگشا فعلاً تمام شده.", r.text[:300])
     if r.status_code in (400, 401, 403):
