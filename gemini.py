@@ -30,10 +30,20 @@ def _ver(name: str) -> float:
     return float(m.group(1)) if m else 0.0
 
 
+async def _req(method: str, url: str, params: dict | None = None, json: dict | None = None) -> httpx.Response:
+    """اول با هدر x-goog-api-key؛ اگر ۴۰۱ شد یک‌بار با ?key= امتحان می‌کند."""
+    r = await _http().request(method, url, params=params, json=json, headers={"x-goog-api-key": config.GEMINI_API_KEY})
+    if r.status_code == 401:
+        p = dict(params or {})
+        p["key"] = config.GEMINI_API_KEY
+        r2 = await _http().request(method, url, params=p, json=json)
+        if r2.status_code != 401:
+            return r2
+    return r
+
+
 async def _list_models() -> httpx.Response:
-    return await _http().get(
-        f"{_BASE}/models", params={"pageSize": 200}, headers={"x-goog-api-key": config.GEMINI_API_KEY}
-    )
+    return await _req("GET", f"{_BASE}/models", params={"pageSize": 200})
 
 
 def _flash_names(data: dict) -> list[str]:
@@ -71,11 +81,7 @@ async def _generate(model: str, system: str, messages: list[dict], max_tokens: i
         ],
         "generationConfig": {"temperature": 0.9, "maxOutputTokens": max_tokens},
     }
-    return await _http().post(
-        f"{_BASE}/models/{model}:generateContent",
-        json=body,
-        headers={"x-goog-api-key": config.GEMINI_API_KEY},
-    )
+    return await _req("POST", f"{_BASE}/models/{model}:generateContent", json=body)
 
 
 async def chat(system: str, messages: list[dict], max_tokens: int = 1200) -> str:
@@ -104,7 +110,11 @@ async def chat(system: str, messages: list[dict], max_tokens: int = 1200) -> str
 
 async def diagnose() -> str:
     """گزارشِ کوتاه برای مدیر: کلید، فهرست مدل‌ها، و یک تماسِ آزمایشی."""
-    lines = ["کلید: %s…" % config.GEMINI_API_KEY[:3]]
+    k = config.GEMINI_API_KEY
+    lines = ["کلید: %s… طول %d، آخرش …%s" % (k[:3], len(k), k[-4:])]
+    h = await _http().get(f"{_BASE}/models", params={"pageSize": 1}, headers={"x-goog-api-key": k})
+    q = await _http().get(f"{_BASE}/models", params={"pageSize": 1, "key": k})
+    lines.append("با هدر: HTTP %s | با ?key=: HTTP %s" % (h.status_code, q.status_code))
     r = await _list_models()
     lines.append("فهرست مدل‌ها: HTTP %s" % r.status_code)
     if r.status_code != 200:
