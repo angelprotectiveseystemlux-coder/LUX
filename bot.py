@@ -8,6 +8,7 @@ import httpx
 
 import config
 import db
+import gemini
 
 _client: httpx.AsyncClient | None = None
 
@@ -86,6 +87,7 @@ async def _cmd_help():
         "/user &lt;شناسه یا آیدی&gt; — جزئیات یک کاربر\n"
         "/data &lt;شناسه یا آیدی&gt; — فایل JSON کامل کاربر\n"
         "/top — پرکاربردترین قابلیت‌ها\n"
+        "/ai — تست اتصال رهگشا (Gemini)\n"
         "/chats &lt;شناسه یا آیدی&gt; — آخرین گفتگوهای کاربر با رهگشا\n"
         "/forgots — درخواست‌های فراموشی رمز\n"
         "/ban &lt;شناسه&gt; و /unban &lt;شناسه&gt;"
@@ -158,6 +160,16 @@ async def _cmd_chats(arg: str):
     await send("\n\n".join(lines))
 
 
+async def _cmd_ai():
+    try:
+        t = await gemini.chat("فقط یک کلمه جواب بده.", [{"role": "user", "text": "سلام"}], 50)
+        await send("✅ Gemini جواب داد: " + esc(t[:200]))
+    except gemini.GeminiError as e:
+        await send(f"❌ {esc(e.code)}: {esc(e.message)}\n{esc(e.detail)}")
+    except Exception as e:
+        await send("❌ " + esc(type(e).__name__) + ": " + esc(str(e)[:300]))
+
+
 async def _cmd_top():
     rows = await db.q("SELECT kind, COUNT(*) AS n FROM events GROUP BY kind ORDER BY n DESC LIMIT 15")
     if not rows:
@@ -200,6 +212,8 @@ async def _handle_message(m: dict):
         await _cmd_user(arg)
     elif cmd == "/data" and arg:
         await _cmd_data(arg)
+    elif cmd == "/ai":
+        await _cmd_ai()
     elif cmd == "/chats" and arg:
         await _cmd_chats(arg)
     elif cmd == "/top":

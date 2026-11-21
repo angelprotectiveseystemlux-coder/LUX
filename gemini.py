@@ -9,16 +9,17 @@ _model: str | None = None
 
 
 class GeminiError(Exception):
-    def __init__(self, code: str, message: str):
+    def __init__(self, code: str, message: str, detail: str = ""):
         super().__init__(message)
         self.code = code
         self.message = message
+        self.detail = detail
 
 
 def _http() -> httpx.AsyncClient:
     global _client
     if _client is None:
-        _client = httpx.AsyncClient(timeout=60)
+        _client = httpx.AsyncClient(timeout=35)
     return _client
 
 
@@ -65,9 +66,9 @@ async def chat(system: str, messages: list[dict], max_tokens: int = 1200) -> str
         _model = await _pick_model()
         r = await _generate(_model, system, messages, max_tokens)
     if r.status_code == 429:
-        raise GeminiError("quota", "سهمیه‌ی رهگشا فعلاً تمام شده.")
+        raise GeminiError("quota", "سهمیه‌ی رهگشا فعلاً تمام شده.", r.text[:300])
     if r.status_code in (400, 401, 403):
-        raise GeminiError("ai_key", "کلید رهگشا مشکل دارد.")
+        raise GeminiError("ai_key", "کلید رهگشا مشکل دارد.", r.text[:300])
     r.raise_for_status()
     data = r.json()
     cands = data.get("candidates") or []
